@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>デジタル時計 + 凹みグリッド背景</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background-color: #111;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Courier New', monospace;
+    color: #eee;
+    position: relative;
+  }
+  #gridCanvas {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 0;
+  }
+  #clock {
+    position: relative;
+    z-index: 1;
+    font-size: 6rem;
+    background-color: #333;
+    padding: 30px 60px;
+    border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), inset 0 0 15px #111;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gridCanvas"></canvas>
+<div id="clock">--:--:--</div>
+
+<script>
+  const canvas = document.getElementById('gridCanvas');
+  const ctx = canvas.getContext('2d');
+  let width, height;
+  let mouseX = -1000, mouseY = -1000;
+
+  const gridSpacing = 100;
+  const highlightRadius = 40;
+  const fadeSpeed = 0.03;
+
+  const verticalAlphas = new Map();
+  const horizontalAlphas = new Map();
+
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width * devicePixelRatio;
+    canvas.height = height * devicePixelRatio;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+  }
+
+  // 交点からの距離による減衰（0〜1）
+  function crossFalloff(x, y, crossX, crossY, maxDistance) {
+    const dx = x - crossX;
+    const dy = y - crossY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    return Math.max(0, 1 - dist / maxDistance);
+  }
+
+  function updateAlphas() {
+    for (let [key, alpha] of verticalAlphas) {
+      verticalAlphas.set(key, Math.max(0, alpha - fadeSpeed));
+    }
+    for (let [key, alpha] of horizontalAlphas) {
+      horizontalAlphas.set(key, Math.max(0, alpha - fadeSpeed));
+    }
+  }
+
+  function drawGrid() {
+    ctx.clearRect(0, 0, width, height);
+
+    const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+    bgGradient.addColorStop(0, '#0a0a0a');
+    bgGradient.addColorStop(1, '#1a1a1a');
+    ctx.fillStyle = bgGradient;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.lineWidth = 3;
+
+    // マウスに一番近い縦線Xを探す
+    let nearestVerticalX = Math.round(mouseX / gridSpacing) * gridSpacing;
+    if (nearestVerticalX < 0) nearestVerticalX = 0;
+    if (nearestVerticalX > width) nearestVerticalX = width;
+
+    // マウスに一番近い横線Yを探す
+    let nearestHorizontalY = Math.round(mouseY / gridSpacing) * gridSpacing;
+    if (nearestHorizontalY < 0) nearestHorizontalY = 0;
+    if (nearestHorizontalY > height) nearestHorizontalY = height;
+
+    const maxCrossDistance = 150; // 交点からの減衰距離
+
+    // 縦線
+    for (let x = 0; x <= width; x += gridSpacing) {
+      const dist = Math.abs(x - mouseX);
+      const key = `v:${x}`;
+
+      let alpha = verticalAlphas.get(key) || 0;
+
+      if (dist < highlightRadius) {
+        const mouseAlpha = 1 - dist / highlightRadius;
+        const crossAlpha = crossFalloff(x, nearestHorizontalY, nearestVerticalX, nearestHorizontalY, maxCrossDistance);
+        const targetAlpha = mouseAlpha * crossAlpha;
+
+        alpha = Math.max(alpha, targetAlpha);
+        verticalAlphas.set(key, alpha);
+      } else if (!verticalAlphas.has(key)) {
+        verticalAlphas.set(key, 0);
+      }
+
+      const baseColor = [20, 20, 20];
+      const greenIntensity = Math.round(255 * alpha);
+      const r = baseColor[0] * (1 - alpha);
+      const g = baseColor[1] * (1 - alpha) + greenIntensity;
+      const b = baseColor[2] * (1 - alpha);
+
+      ctx.strokeStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = -3;
+      ctx.shadowOffsetY = -3;
+
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = 3;
+      ctx.shadowOffsetY = 3;
+
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+    }
+
+    // 横線
+    for (let y = 0; y <= height; y += gridSpacing) {
+      const dist = Math.abs(y - mouseY);
+      const key = `h:${y}`;
+
+      let alpha = horizontalAlphas.get(key) || 0;
+
+      if (dist < highlightRadius) {
+        const mouseAlpha = 1 - dist / highlightRadius;
+        const crossAlpha = crossFalloff(nearestVerticalX, y, nearestVerticalX, nearestHorizontalY, maxCrossDistance);
+        const targetAlpha = mouseAlpha * crossAlpha;
+
+        alpha = Math.max(alpha, targetAlpha);
+        horizontalAlphas.set(key, alpha);
+      } else if (!horizontalAlphas.has(key)) {
+        horizontalAlphas.set(key, 0);
+      }
+
+      const baseColor = [20, 20, 20];
+      const greenIntensity = Math.round(255 * alpha);
+      const r = baseColor[0] * (1 - alpha);
+      const g = baseColor[1] * (1 - alpha) + greenIntensity;
+      const b = baseColor[2] * (1 - alpha);
+
+      ctx.strokeStyle = `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.6)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = -3;
+      ctx.shadowOffsetY = -3;
+
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = 3;
+      ctx.shadowOffsetY = 3;
+
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+    }
+  }
+
+  function animate() {
+    updateAlphas();
+    drawGrid();
+    requestAnimationFrame(animate);
+  }
+
+  window.addEventListener('resize', () => {
+    resize();
+  });
+
+  window.addEventListener('mousemove', e => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+  });
+
+  resize();
+  animate();
+
+  function updateClock() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    document.getElementById('clock').textContent = `${h}:${m}:${s}`;
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+</script>
+
+</body>
+</html>
